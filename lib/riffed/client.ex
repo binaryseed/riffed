@@ -62,9 +62,10 @@ defmodule Riffed.Client do
   defp build_client_function(thrift_metadata, struct_module, function_name, overrides) do
     function_meta = Meta.metadata_for_function(thrift_metadata, function_name)
     param_meta = function_meta[:params]
-    reply_meta = function_meta[:reply] |> Riffed.Struct.to_riffed_type_spec
+    reply_meta = function_meta[:reply] |> Riffed.Struct.to_riffed_type_spec()
 
-    reply_meta = Riffed.Enumeration.get_overridden_type(function_name, :return_type, overrides, reply_meta)
+    reply_meta =
+      Riffed.Enumeration.get_overridden_type(function_name, :return_type, overrides, reply_meta)
 
     arg_list = build_arg_list(param_meta)
     {:{}, _, list_args} = build_handler_tuple_args(param_meta)
@@ -79,12 +80,11 @@ defmodule Riffed.Client do
       end
 
       def unquote(function_name)(client_pid, unquote_splicing(arg_list))
-        when is_pid(client_pid) do
+          when is_pid(client_pid) do
+        unquote_splicing(casts)
 
-          unquote_splicing(casts)
-
-          rv = GenServer.call(client_pid, {unquote(function_name), unquote(list_args)})
-          unquote(struct_module).to_elixir(rv, unquote(reply_meta))
+        rv = GenServer.call(client_pid, {unquote(function_name), unquote(list_args)})
+        unquote(struct_module).to_elixir(rv, unquote(reply_meta))
       end
     end
   end
@@ -100,32 +100,34 @@ defmodule Riffed.Client do
     thrift_client_module = Module.get_attribute(env.module, :thrift_module)
     functions = Module.get_attribute(env.module, :functions)
 
-
     thrift_metadata = extract(thrift_client_module, functions)
     num_retries = opts[:retries] || 0
 
-    client_functions = build_client_functions(functions, thrift_metadata, struct_module, overrides)
+    client_functions =
+      build_client_functions(functions, thrift_metadata, struct_module, overrides)
 
     hostname = opts[:host]
     port = opts[:port]
 
-    opts = opts
-    |> Keyword.delete(:port)
-    |> Keyword.delete(:host)
-    |> Keyword.delete(:retries)
+    opts =
+      opts
+      |> Keyword.delete(:port)
+      |> Keyword.delete(:host)
+      |> Keyword.delete(:retries)
 
-    struct_module = if Module.get_attribute(env.module, :auto_import_structs) do
-      quote do
-        defmodule unquote(struct_module) do
-          use Riffed.Struct, unquote(Meta.structs_to_keyword(thrift_metadata))
-          unquote_splicing(Riffed.Callbacks.reconstitute(env.module))
-          unquote_splicing(Riffed.Enumeration.reconstitute(env.module))
+    struct_module =
+      if Module.get_attribute(env.module, :auto_import_structs) do
+        quote do
+          defmodule unquote(struct_module) do
+            use Riffed.Struct, unquote(Meta.structs_to_keyword(thrift_metadata))
+            unquote_splicing(Riffed.Callbacks.reconstitute(env.module))
+            unquote_splicing(Riffed.Enumeration.reconstitute(env.module))
+          end
+        end
+      else
+        quote do
         end
       end
-    else
-      quote do
-      end
-    end
 
     quote do
       use GenServer
@@ -139,7 +141,7 @@ defmodule Riffed.Client do
           %Client{client: client, connect: connect_fn}
         end
 
-        def reconnect(client=%Client{}) do
+        def reconnect(client = %Client{}) do
           {:ok, new_client} = client.connect.()
           %Client{client | client: new_client}
         end
@@ -173,16 +175,16 @@ defmodule Riffed.Client do
         GenServer.start_link(__MODULE__, {host, port})
       end
 
-      def handle_call({:disconnect, _args}, _parent, client=%Client{client: thrift_client}) do
+      def handle_call({:disconnect, _args}, _parent, client = %Client{client: thrift_client}) do
         :thrift_client.close(thrift_client)
         {:reply, :ok, %{client | client: nil}}
       end
 
-      def handle_call({:reconnect, _args}, _parent, client=%Client{client: nil}) do
+      def handle_call({:reconnect, _args}, _parent, client = %Client{client: nil}) do
         {:reply, :ok, Client.new(client.connect)}
       end
 
-      def handle_call({:reconnect, _args}, _parent, client=%Client{client: thrift_client}) do
+      def handle_call({:reconnect, _args}, _parent, client = %Client{client: thrift_client}) do
         :thrift_client.close(thrift_client)
         {:reply, :ok, Client.new(client.connect)}
       end
@@ -203,16 +205,18 @@ defmodule Riffed.Client do
       end
 
       defp call_thrift(client, call_name, args, retry_count)
-      when retry_count < unquote(num_retries) do
+           when retry_count < unquote(num_retries) do
+        {thrift_client, response} =
+          try do
+            :thrift_client.call(client.client, call_name, args)
+          rescue
+            error -> {client.client, {:error, {:internal_server_error, error}}}
+          catch
+            exception_response = {_, {:exception, _}} -> exception_response
+          end
 
-        {thrift_client, response} = try do
-          :thrift_client.call(client.client, call_name, args)
-        rescue
-          error -> {client.client, {:error, {:internal_server_error, error}}}
-        catch
-          exception_response = {_, {:exception, _}} -> exception_response
-        end
         new_client = %Client{client | client: thrift_client}
+
         case response do
           {:error, :closed} ->
             # close before we reconnect, otherwise we'll leak the socket's port.
@@ -222,13 +226,17 @@ defmodule Riffed.Client do
             :thrift_client.close(thrift_client)
             new_client = Client.reconnect(client)
             call_thrift(new_client, call_name, args, retry_count + 1)
+
           err = {:error, _} ->
             {new_client, err}
+
           exception = {:exception, _} ->
             {new_client, exception}
+
           {:ok, rsp} ->
             {new_client, rsp}
-          other = {other, rsp} ->
+
+          other = {_, _} ->
             {new_client, other}
         end
       end
@@ -242,10 +250,12 @@ defmodule Riffed.Client do
       end
 
       def connect(host, port) do
-        :thrift_client_util.new(to_host(host),
-                                port,
-                                unquote(thrift_client_module),
-                                unquote(opts))
+        :thrift_client_util.new(
+          to_host(host),
+          port,
+          unquote(thrift_client_module),
+          unquote(opts)
+        )
       end
 
       def close do
