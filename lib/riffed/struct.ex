@@ -263,7 +263,7 @@ defmodule Riffed.Struct do
         quote do
           {unquote(name),
            unquote(dest_module).to_erlang(
-             s.unquote(field_variable)(), unquote(type_spec))
+             s.unquote(field_variable), unquote(type_spec))
           }
         end
       end)

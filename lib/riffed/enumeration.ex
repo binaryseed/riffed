@@ -204,7 +204,7 @@ defmodule Riffed.Enumeration do
     enum_module = Module.concat(struct_module, conversion)
     quote do
       def to_erlang(enum=%unquote(enum_module){}, _) do
-        enum.value()
+        enum.value
       end
     end
   end
@@ -303,11 +303,11 @@ defmodule Riffed.Enumeration do
     fq_enum_name = Module.concat(container_module, enum_name)
     quote do
       def to_erlang(enum=%unquote(fq_enum_name){}, unquote(enum_alias)) do
-        enum.value()
+        enum.value
       end
 
       def to_erlang(enum=%unquote(fq_enum_name){}, _) do
-        enum.value()
+        enum.value
       end
     end
   end
